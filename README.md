@@ -7,4 +7,4 @@
 
 # Testing the server:
 #
-#   % ./runhasher
+#   % ./runhash
