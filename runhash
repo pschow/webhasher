@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# Brief overview:
+#
+# 1. Initiate LIMIT hashing requests in parallel
+# 2. Send a graceful shutdown request
+# 3. Initiate LIMIT more requests in parallel before server processes shutdown
+#    These should still be processed before server finishes
+# 4. Verify correct results for both #1 and #3
+
+declare -r LIMIT=500
+
+function resultcmp() {
+for i in $(seq $LIMIT); do
+   if [ ! -f $1.$i ]; then
+       echo "Error: Missing expected file $1.$i"
+       return 1
+   else
+       hash=$(sha256sum $1.$i | awk '{print $1}')
+       if [ "$2" != "$hash" ]; then
+           echo "File $1.$i doesn't have expected results"
+           return 1
+       fi
+   fi
+done
+
+return 0
+}
+
+rm -f normal* quiet*
+
+# Normal processing
+for i in $(seq $LIMIT); do
+    curl -s --data "password=angryMonkey" http://localhost:8091 1 > normal.$i &
+done
+
+# Tell the server to shutdown gracefully.  
+curl -s --data "graceful shutdown" http://localhost:8091 1 > /dev/null &
+
+# These requests will still get in before the five second delay window when the 
+# shutdown is processed.  They should still be processed even after no new 
+# connections are being accepted.
+for i in $(seq $LIMIT); do
+    curl -s --data "password=angryMonkey" http://localhost:8091 1 > quiet.$i &
+done
+
+wait
+
+# Ensure normal and post-shutdown results are correct
+
+GOLDEN=$(mktemp /tmp/base64-good.XXXXXXXX)
+
+echo -n 'ZEHhWB65gUlzdVwtDQArEyx-KVLzp_aTaRaPlBzYRIFj6vjFdqEb0Q5B8zVKCZ0vKbZPZklJz0Fd7su2A-gf7Q==' > $GOLDEN
+
+goldenhash=$(sha256sum $GOLDEN | awk '{print $1}')
+rm -f $GOLDEN
+
+resultcmp normal $goldenhash
+[ $? -eq 0 ] && rm -f normal*
+
+resultcmp quiet $goldenhash
+[ $? -eq 0 ] && rm -f quiet*
+
